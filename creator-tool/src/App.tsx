@@ -10,7 +10,7 @@ import {
   serializePreset,
   validatePreset
 } from "./lib/preset";
-import type { Palette, Preset, PresetTier } from "./types";
+import type { OverlaySettings, Palette, Preset, PresetTier } from "./types";
 
 type WritableStreamLike = {
   write: (data: string | Blob | BufferSource) => Promise<void>;
@@ -72,6 +72,14 @@ async function ensureReadWritePermission(handle: DirectoryHandleLike): Promise<b
   return request === "granted";
 }
 
+function normalizeOverlays(overlays: OverlaySettings): OverlaySettings | undefined {
+  return Object.keys(overlays).length === 0 ? undefined : overlays;
+}
+
+function isRangeInputTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement && target.type === "range";
+}
+
 export default function App(): JSX.Element {
   const [palettes, setPalettes] = useState<Palette[]>([]);
   const [paletteErrors, setPaletteErrors] = useState<string[]>([]);
@@ -83,6 +91,8 @@ export default function App(): JSX.Element {
   const [presetsDirectoryHandle, setPresetsDirectoryHandle] = useState<DirectoryHandleLike | null>(null);
   const [exportStatus, setExportStatus] = useState<string>("");
   const [importStatus, setImportStatus] = useState<string>("");
+  const [isAdjustingControl, setIsAdjustingControl] = useState(false);
+  const [overlayMemoryByPreset, setOverlayMemoryByPreset] = useState<Record<number, OverlaySettings>>({});
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedPreset = presets[selectedPresetIndex];
@@ -111,8 +121,56 @@ export default function App(): JSX.Element {
     void refreshPalettes();
   }, []);
 
+  useEffect(() => {
+    if (!isAdjustingControl) {
+      return;
+    }
+
+    const stopAdjusting = (): void => setIsAdjustingControl(false);
+    window.addEventListener("pointerup", stopAdjusting);
+    window.addEventListener("pointercancel", stopAdjusting);
+    return () => {
+      window.removeEventListener("pointerup", stopAdjusting);
+      window.removeEventListener("pointercancel", stopAdjusting);
+    };
+  }, [isAdjustingControl]);
+
   function setCurrentPreset(nextPreset: Preset): void {
     setPresets((current) => updatePresetAtIndex(current, selectedPresetIndex, nextPreset));
+  }
+
+  function patchCurrentPreset(patch: (preset: Preset) => Preset): void {
+    if (!selectedPreset) {
+      return;
+    }
+    setCurrentPreset(patch(selectedPreset));
+  }
+
+  function patchOverlays(patch: (overlays: OverlaySettings) => OverlaySettings): void {
+    patchCurrentPreset((preset) => {
+      const next = patch({ ...(preset.overlays ?? {}) });
+      return {
+        ...preset,
+        overlays: normalizeOverlays(next)
+      };
+    });
+  }
+
+  function rememberOverlaySetting<K extends keyof OverlaySettings>(
+    key: K,
+    value: NonNullable<OverlaySettings[K]>
+  ): void {
+    setOverlayMemoryByPreset((current) => ({
+      ...current,
+      [selectedPresetIndex]: {
+        ...(current[selectedPresetIndex] ?? {}),
+        [key]: value
+      }
+    }));
+  }
+
+  function getRememberedOverlay<K extends keyof OverlaySettings>(key: K): OverlaySettings[K] | undefined {
+    return overlayMemoryByPreset[selectedPresetIndex]?.[key] as OverlaySettings[K] | undefined;
   }
 
   function createPreset(): void {
@@ -129,19 +187,20 @@ export default function App(): JSX.Element {
   async function loadPresetFromFile(file: File): Promise<void> {
     try {
       const fileText = await readFileAsText(file);
-      const importedPreset = parseImportedPresetJson(fileText);
+      const parsed = parseImportedPresetJson(fileText);
+      const importedPreset = parsed.preset;
 
       let normalizedPreset = importedPreset;
+      const warnings = [...parsed.warnings];
+
       if (
         palettes.length > 0 &&
         !palettes.some((palette) => palette.name === importedPreset.palette)
       ) {
         normalizedPreset = { ...importedPreset, palette: palettes[0].name };
-        setImportStatus(
-          `Loaded "${importedPreset.name}" but palette "${importedPreset.palette}" was not found; remapped to "${palettes[0].name}".`
+        warnings.push(
+          `Palette "${importedPreset.palette}" was not found and was remapped to "${palettes[0].name}".`
         );
-      } else {
-        setImportStatus(`Loaded preset "${importedPreset.name}" from ${file.name}.`);
       }
 
       const errors = validatePreset(normalizedPreset, palettes);
@@ -150,6 +209,12 @@ export default function App(): JSX.Element {
       const nextPresets = [...presets, normalizedPreset];
       setPresets(nextPresets);
       setSelectedPresetIndex(nextPresets.length - 1);
+
+      if (warnings.length > 0) {
+        setImportStatus(`Loaded "${normalizedPreset.name}" with migration notes: ${warnings.join(" ")}`);
+      } else {
+        setImportStatus(`Loaded preset "${normalizedPreset.name}" from ${file.name}.`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown preset import error.";
       setImportStatus(`Import failed: ${message}`);
@@ -167,8 +232,12 @@ export default function App(): JSX.Element {
     }
 
     try {
-      const picker = (window as { showDirectoryPicker: (options?: { mode?: "read" | "readwrite" }) => Promise<DirectoryHandleLike> })
-        .showDirectoryPicker;
+      const picker = (
+        window as {
+          showDirectoryPicker: (options?: { mode?: "read" | "readwrite" }) => Promise<DirectoryHandleLike>;
+        }
+      ).showDirectoryPicker;
+
       const handle = await picker({ mode: "readwrite" });
       const granted = await ensureReadWritePermission(handle);
       if (!granted) {
@@ -239,11 +308,17 @@ export default function App(): JSX.Element {
 
   const shaderColors = useMemo(() => getShaderColors(selectedPalette), [selectedPalette]);
 
+  const overlays = selectedPreset?.overlays ?? {};
+  const liquidEnabled = Boolean(overlays.liquidGlass);
+  const ribbedEnabled = Boolean(overlays.ribbedGlass);
+  const chromaticEnabled = Boolean(overlays.chromaticAberration);
+  const pixelGridEnabled = Boolean(overlays.pixelGrid);
+
   return (
     <main className="layout">
       <section className="preview-panel">
         {selectedPreset ? (
-          <ShaderCanvas preset={selectedPreset} colors={shaderColors} />
+          <ShaderCanvas preset={selectedPreset} colors={shaderColors} paused={isAdjustingControl} />
         ) : (
           <div className="empty-state">Create a preset after loading palettes.</div>
         )}
@@ -317,14 +392,31 @@ export default function App(): JSX.Element {
         </div>
 
         {selectedPreset && (
-          <div className="card controls-grid">
+          <div
+            className="card controls-grid"
+            onPointerDownCapture={(event) => {
+              if (isRangeInputTarget(event.target)) {
+                setIsAdjustingControl(true);
+              }
+            }}
+            onPointerUpCapture={(event) => {
+              if (isRangeInputTarget(event.target)) {
+                setIsAdjustingControl(false);
+              }
+            }}
+            onPointerCancelCapture={(event) => {
+              if (isRangeInputTarget(event.target)) {
+                setIsAdjustingControl(false);
+              }
+            }}
+          >
             <h2>Controls</h2>
 
             <label>
               Name
               <input
                 value={selectedPreset.name}
-                onChange={(event) => setCurrentPreset({ ...selectedPreset, name: event.target.value })}
+                onChange={(event) => patchCurrentPreset((preset) => ({ ...preset, name: event.target.value }))}
               />
             </label>
 
@@ -332,7 +424,9 @@ export default function App(): JSX.Element {
               Palette
               <select
                 value={selectedPreset.palette}
-                onChange={(event) => setCurrentPreset({ ...selectedPreset, palette: event.target.value })}
+                onChange={(event) =>
+                  patchCurrentPreset((preset) => ({ ...preset, palette: event.target.value }))
+                }
               >
                 {palettes.map((palette) => (
                   <option key={palette.name} value={palette.name}>
@@ -347,15 +441,15 @@ export default function App(): JSX.Element {
               <select
                 value={selectedPreset.effect}
                 onChange={(event) =>
-                  setCurrentPreset({
-                    ...selectedPreset,
+                  patchCurrentPreset((preset) => ({
+                    ...preset,
                     effect: event.target.value as Preset["effect"]
-                  })
+                  }))
                 }
               >
                 <option value="flow">flow</option>
-                <option value="liquid">liquid</option>
                 <option value="burn">burn</option>
+                <option value="gas">gas</option>
               </select>
             </label>
 
@@ -368,10 +462,10 @@ export default function App(): JSX.Element {
                 step={0.01}
                 value={selectedPreset.speed}
                 onChange={(event) =>
-                  setCurrentPreset({
-                    ...selectedPreset,
+                  patchCurrentPreset((preset) => ({
+                    ...preset,
                     speed: Number(event.target.value)
-                  })
+                  }))
                 }
               />
             </label>
@@ -385,10 +479,10 @@ export default function App(): JSX.Element {
                 step={0.01}
                 value={selectedPreset.distortion}
                 onChange={(event) =>
-                  setCurrentPreset({
-                    ...selectedPreset,
+                  patchCurrentPreset((preset) => ({
+                    ...preset,
                     distortion: Number(event.target.value)
-                  })
+                  }))
                 }
               />
             </label>
@@ -402,44 +496,378 @@ export default function App(): JSX.Element {
                 step={0.01}
                 value={selectedPreset.noise}
                 onChange={(event) =>
-                  setCurrentPreset({
-                    ...selectedPreset,
+                  patchCurrentPreset((preset) => ({
+                    ...preset,
                     noise: Number(event.target.value)
-                  })
+                  }))
                 }
               />
             </label>
+
+            <h3 className="subheading">Overlays</h3>
 
             <label className="checkbox-row">
               <input
                 type="checkbox"
-                checked={selectedPreset.glass}
-                onChange={(event) =>
-                  setCurrentPreset({
-                    ...selectedPreset,
-                    glass: event.target.checked
-                  })
-                }
+                checked={liquidEnabled}
+                onChange={(event) => {
+                  patchOverlays((current) => {
+                    const next = { ...current };
+                    if (event.target.checked) {
+                      next.liquidGlass =
+                        (getRememberedOverlay("liquidGlass") as OverlaySettings["liquidGlass"]) ??
+                        next.liquidGlass ??
+                        { intensity: 0.25 };
+                    } else {
+                      if (next.liquidGlass) {
+                        rememberOverlaySetting("liquidGlass", next.liquidGlass);
+                      }
+                      delete next.liquidGlass;
+                    }
+                    return next;
+                  });
+                }}
               />
-              Glass
+              Liquid Glass
             </label>
 
-            <label>
-              Glass size ({selectedPreset.glassSize.toFixed(2)})
+            {liquidEnabled && (
+              <label>
+                Liquid intensity ({(overlays.liquidGlass?.intensity ?? 0).toFixed(2)})
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={overlays.liquidGlass?.intensity ?? 0}
+                  onChange={(event) => {
+                    patchOverlays((current) => ({
+                      ...current,
+                      liquidGlass: {
+                        intensity: Number(event.target.value)
+                      }
+                    }));
+                  }}
+                />
+              </label>
+            )}
+
+            <label className="checkbox-row">
               <input
-                type="range"
-                min={0.05}
-                max={1}
-                step={0.01}
-                value={selectedPreset.glassSize}
-                onChange={(event) =>
-                  setCurrentPreset({
-                    ...selectedPreset,
-                    glassSize: Number(event.target.value)
-                  })
-                }
+                type="checkbox"
+                checked={ribbedEnabled}
+                onChange={(event) => {
+                  patchOverlays((current) => {
+                    const next = { ...current };
+                    if (event.target.checked) {
+                      next.ribbedGlass =
+                        (getRememberedOverlay("ribbedGlass") as OverlaySettings["ribbedGlass"]) ??
+                        next.ribbedGlass ??
+                        {
+                          intensity: 0.25,
+                          frequency: 12,
+                          angle: 0,
+                          mode: "linear"
+                        };
+                    } else {
+                      if (next.ribbedGlass) {
+                        rememberOverlaySetting("ribbedGlass", next.ribbedGlass);
+                      }
+                      delete next.ribbedGlass;
+                    }
+                    return next;
+                  });
+                }}
               />
+              Ribbed Glass
             </label>
+
+            {ribbedEnabled && (
+              <>
+                <label>
+                  Ribbed intensity ({(overlays.ribbedGlass?.intensity ?? 0).toFixed(2)})
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={overlays.ribbedGlass?.intensity ?? 0}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        ribbedGlass: {
+                          ...(current.ribbedGlass ?? {
+                            intensity: 0,
+                            frequency: 12,
+                            angle: 0,
+                            mode: "linear"
+                          }),
+                          intensity: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Ribbed frequency ({(overlays.ribbedGlass?.frequency ?? 0).toFixed(1)})
+                  <input
+                    type="range"
+                    min={1}
+                    max={60}
+                    step={0.5}
+                    value={overlays.ribbedGlass?.frequency ?? 12}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        ribbedGlass: {
+                          ...(current.ribbedGlass ?? {
+                            intensity: 0.25,
+                            frequency: 12,
+                            angle: 0,
+                            mode: "linear"
+                          }),
+                          frequency: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Ribbed angle ({(overlays.ribbedGlass?.angle ?? 0).toFixed(0)}°)
+                  <input
+                    type="range"
+                    min={-180}
+                    max={180}
+                    step={1}
+                    value={overlays.ribbedGlass?.angle ?? 0}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        ribbedGlass: {
+                          ...(current.ribbedGlass ?? {
+                            intensity: 0.25,
+                            frequency: 12,
+                            angle: 0,
+                            mode: "linear"
+                          }),
+                          angle: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Ribbed mode
+                  <select
+                    value={overlays.ribbedGlass?.mode ?? "linear"}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        ribbedGlass: {
+                          ...(current.ribbedGlass ?? {
+                            intensity: 0.25,
+                            frequency: 12,
+                            angle: 0,
+                            mode: "linear"
+                          }),
+                          mode: event.target.value as "linear" | "grid"
+                        }
+                      }));
+                    }}
+                  >
+                    <option value="linear">linear</option>
+                    <option value="grid">grid</option>
+                  </select>
+                </label>
+              </>
+            )}
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={chromaticEnabled}
+                onChange={(event) => {
+                  patchOverlays((current) => {
+                    const next = { ...current };
+                    if (event.target.checked) {
+                      next.chromaticAberration =
+                        (getRememberedOverlay(
+                          "chromaticAberration"
+                        ) as OverlaySettings["chromaticAberration"]) ??
+                        next.chromaticAberration ??
+                        {
+                          intensity: 0.2,
+                          offset: 0.08,
+                          mode: "radial"
+                        };
+                    } else {
+                      if (next.chromaticAberration) {
+                        rememberOverlaySetting("chromaticAberration", next.chromaticAberration);
+                      }
+                      delete next.chromaticAberration;
+                    }
+                    return next;
+                  });
+                }}
+              />
+              Chromatic Aberration
+            </label>
+
+            {chromaticEnabled && (
+              <>
+                <label>
+                  Chromatic intensity ({(overlays.chromaticAberration?.intensity ?? 0).toFixed(2)})
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={overlays.chromaticAberration?.intensity ?? 0.2}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        chromaticAberration: {
+                          ...(current.chromaticAberration ?? {
+                            intensity: 0.2,
+                            offset: 0.08,
+                            mode: "radial"
+                          }),
+                          intensity: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Chromatic offset ({(overlays.chromaticAberration?.offset ?? 0).toFixed(2)})
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={overlays.chromaticAberration?.offset ?? 0.08}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        chromaticAberration: {
+                          ...(current.chromaticAberration ?? {
+                            intensity: 0.2,
+                            offset: 0.08,
+                            mode: "radial"
+                          }),
+                          offset: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Chromatic mode
+                  <select
+                    value={overlays.chromaticAberration?.mode ?? "radial"}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        chromaticAberration: {
+                          ...(current.chromaticAberration ?? {
+                            intensity: 0.2,
+                            offset: 0.08,
+                            mode: "radial"
+                          }),
+                          mode: event.target.value as "radial" | "directional"
+                        }
+                      }));
+                    }}
+                  >
+                    <option value="radial">radial</option>
+                    <option value="directional">directional</option>
+                  </select>
+                </label>
+              </>
+            )}
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={pixelGridEnabled}
+                onChange={(event) => {
+                  patchOverlays((current) => {
+                    const next = { ...current };
+                    if (event.target.checked) {
+                      next.pixelGrid =
+                        (getRememberedOverlay("pixelGrid") as OverlaySettings["pixelGrid"]) ??
+                        next.pixelGrid ??
+                        {
+                          size: 32,
+                          lineStrength: 0.25
+                        };
+                    } else {
+                      if (next.pixelGrid) {
+                        rememberOverlaySetting("pixelGrid", next.pixelGrid);
+                      }
+                      delete next.pixelGrid;
+                    }
+                    return next;
+                  });
+                }}
+              />
+              Pixel Grid
+            </label>
+
+            {pixelGridEnabled && (
+              <>
+                <label>
+                  Grid size ({(overlays.pixelGrid?.size ?? 0).toFixed(0)})
+                  <input
+                    type="range"
+                    min={1}
+                    max={200}
+                    step={1}
+                    value={overlays.pixelGrid?.size ?? 32}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        pixelGrid: {
+                          ...(current.pixelGrid ?? {
+                            size: 32,
+                            lineStrength: 0.25
+                          }),
+                          size: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Grid line strength ({(overlays.pixelGrid?.lineStrength ?? 0).toFixed(2)})
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={overlays.pixelGrid?.lineStrength ?? 0.25}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        pixelGrid: {
+                          ...(current.pixelGrid ?? {
+                            size: 32,
+                            lineStrength: 0.25
+                          }),
+                          lineStrength: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+              </>
+            )}
           </div>
         )}
 

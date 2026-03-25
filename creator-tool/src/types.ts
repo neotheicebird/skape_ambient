@@ -1,4 +1,33 @@
-export type EffectMode = "flow" | "liquid" | "burn";
+export type EffectMode = "flow" | "burn" | "gas";
+
+export type LiquidGlass = {
+  intensity: number;
+};
+
+export type RibbedGlass = {
+  intensity: number;
+  frequency: number;
+  angle: number;
+  mode: "linear" | "grid";
+};
+
+export type ChromaticAberration = {
+  intensity: number;
+  offset: number;
+  mode: "radial" | "directional";
+};
+
+export type PixelGrid = {
+  size: number;
+  lineStrength: number;
+};
+
+export type OverlaySettings = {
+  liquidGlass?: LiquidGlass;
+  ribbedGlass?: RibbedGlass;
+  chromaticAberration?: ChromaticAberration;
+  pixelGrid?: PixelGrid;
+};
 
 export type Preset = {
   name: string;
@@ -7,8 +36,7 @@ export type Preset = {
   speed: number;
   distortion: number;
   noise: number;
-  glass: boolean;
-  glassSize: number;
+  overlays?: OverlaySettings;
 };
 
 export type Palette = {

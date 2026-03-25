@@ -93,6 +93,13 @@ body {
   grid-template-columns: 1fr;
 }
 
+.subheading {
+  margin: 0.35rem 0 0;
+  font-size: 0.86rem;
+  letter-spacing: 0.02em;
+  color: rgba(190, 216, 255, 0.95);
+}
+
 label {
   display: flex;
   flex-direction: column;

@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { Preset } from "../types";
-import { effectToMode, fragmentShaderSource, hexToRgbVector, vertexShaderSource } from "../lib/shader";
+import {
+  chromaticModeToInt,
+  effectToMode,
+  fragmentShaderSource,
+  hexToRgbVector,
+  ribbedModeToInt,
+  vertexShaderSource
+} from "../lib/shader";
 
 type ShaderCanvasProps = {
   preset: Preset;
   colors: string[];
+  paused?: boolean;
 };
 
 type UniformLocations = {
@@ -16,9 +24,22 @@ type UniformLocations = {
   uSpeed: WebGLUniformLocation | null;
   uDistortion: WebGLUniformLocation | null;
   uNoise: WebGLUniformLocation | null;
-  uGlass: WebGLUniformLocation | null;
-  uGlassSize: WebGLUniformLocation | null;
   uMode: WebGLUniformLocation | null;
+  uGasDirection: WebGLUniformLocation | null;
+  uGasBandStrength: WebGLUniformLocation | null;
+  uLiquidGlassIntensity: WebGLUniformLocation | null;
+  uRibbedEnabled: WebGLUniformLocation | null;
+  uRibbedIntensity: WebGLUniformLocation | null;
+  uRibbedFrequency: WebGLUniformLocation | null;
+  uRibbedAngle: WebGLUniformLocation | null;
+  uRibbedMode: WebGLUniformLocation | null;
+  uChromaticEnabled: WebGLUniformLocation | null;
+  uChromaticIntensity: WebGLUniformLocation | null;
+  uChromaticOffset: WebGLUniformLocation | null;
+  uChromaticMode: WebGLUniformLocation | null;
+  uPixelGridEnabled: WebGLUniformLocation | null;
+  uPixelGridSize: WebGLUniformLocation | null;
+  uPixelGridLineStrength: WebGLUniformLocation | null;
 };
 
 function compileShader(gl: WebGLRenderingContext, type: number, source: string): WebGLShader {
@@ -73,16 +94,44 @@ function getUniformLocations(gl: WebGLRenderingContext, program: WebGLProgram): 
     uSpeed: gl.getUniformLocation(program, "u_speed"),
     uDistortion: gl.getUniformLocation(program, "u_distortion"),
     uNoise: gl.getUniformLocation(program, "u_noise"),
-    uGlass: gl.getUniformLocation(program, "u_glass"),
-    uGlassSize: gl.getUniformLocation(program, "u_glassSize"),
-    uMode: gl.getUniformLocation(program, "u_mode")
+    uMode: gl.getUniformLocation(program, "u_mode"),
+    uGasDirection: gl.getUniformLocation(program, "u_gasDirection"),
+    uGasBandStrength: gl.getUniformLocation(program, "u_gasBandStrength"),
+    uLiquidGlassIntensity: gl.getUniformLocation(program, "u_liquidGlassIntensity"),
+    uRibbedEnabled: gl.getUniformLocation(program, "u_ribbedEnabled"),
+    uRibbedIntensity: gl.getUniformLocation(program, "u_ribbedIntensity"),
+    uRibbedFrequency: gl.getUniformLocation(program, "u_ribbedFrequency"),
+    uRibbedAngle: gl.getUniformLocation(program, "u_ribbedAngle"),
+    uRibbedMode: gl.getUniformLocation(program, "u_ribbedMode"),
+    uChromaticEnabled: gl.getUniformLocation(program, "u_chromaticEnabled"),
+    uChromaticIntensity: gl.getUniformLocation(program, "u_chromaticIntensity"),
+    uChromaticOffset: gl.getUniformLocation(program, "u_chromaticOffset"),
+    uChromaticMode: gl.getUniformLocation(program, "u_chromaticMode"),
+    uPixelGridEnabled: gl.getUniformLocation(program, "u_pixelGridEnabled"),
+    uPixelGridSize: gl.getUniformLocation(program, "u_pixelGridSize"),
+    uPixelGridLineStrength: gl.getUniformLocation(program, "u_pixelGridLineStrength")
   };
 }
 
-export function ShaderCanvas({ preset, colors }: ShaderCanvasProps): JSX.Element {
+export function ShaderCanvas({ preset, colors, paused = false }: ShaderCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number | null>(null);
+  const presetRef = useRef<Preset>(preset);
+  const colorsRef = useRef<string[]>(colors);
+  const pausedRef = useRef<boolean>(paused);
   const [shaderError, setShaderError] = useState<string | null>(null);
+
+  useEffect(() => {
+    presetRef.current = preset;
+  }, [preset]);
+
+  useEffect(() => {
+    colorsRef.current = colors;
+  }, [colors]);
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -124,10 +173,13 @@ export function ShaderCanvas({ preset, colors }: ShaderCanvasProps): JSX.Element
     gl.vertexAttribPointer(positionAttrib, 2, gl.FLOAT, false, 0, 0);
 
     const uniforms = getUniformLocations(gl, program);
-
-    const start = performance.now();
+    let simulatedTime = 0;
+    let previousNow: number | null = null;
 
     const render = (now: number): void => {
+      const currentPreset = presetRef.current;
+      const currentColors = colorsRef.current;
+
       const pixelRatio = window.devicePixelRatio || 1;
       const width = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio));
       const height = Math.max(1, Math.floor(canvas.clientHeight * pixelRatio));
@@ -139,26 +191,59 @@ export function ShaderCanvas({ preset, colors }: ShaderCanvasProps): JSX.Element
 
       gl.viewport(0, 0, width, height);
 
-      const elapsed = (now - start) / 1000;
+      if (previousNow === null) {
+        previousNow = now;
+      }
 
-      const rgb = colors.slice(0, 6).map(hexToRgbVector);
+      const deltaSeconds = Math.max(0, (now - previousNow) / 1000);
+      previousNow = now;
+
+      if (!pausedRef.current) {
+        simulatedTime += deltaSeconds;
+      }
+      const elapsed = simulatedTime;
+
+      const rgb = currentColors.slice(0, 6).map(hexToRgbVector);
       while (rgb.length < 6) {
         rgb.push(rgb[rgb.length - 1] ?? [0.2, 0.2, 0.2]);
       }
 
+      const overlays = currentPreset.overlays ?? {};
+      const liquid = overlays.liquidGlass;
+      const ribbed = overlays.ribbedGlass;
+      const chromatic = overlays.chromaticAberration;
+      const pixelGrid = overlays.pixelGrid;
+
       gl.uniform1f(uniforms.uTime, elapsed);
       gl.uniform2f(uniforms.uResolution, width, height);
-      gl.uniform1i(uniforms.uColorCount, Math.max(1, Math.min(colors.length, 6)));
+      gl.uniform1i(uniforms.uColorCount, Math.max(1, Math.min(currentColors.length, 6)));
       rgb.forEach((color, index) => {
         gl.uniform3f(uniforms.uColors[index], color[0], color[1], color[2]);
       });
 
-      gl.uniform1f(uniforms.uSpeed, preset.speed);
-      gl.uniform1f(uniforms.uDistortion, preset.distortion);
-      gl.uniform1f(uniforms.uNoise, preset.noise);
-      gl.uniform1f(uniforms.uGlass, preset.glass ? 1 : 0);
-      gl.uniform1f(uniforms.uGlassSize, preset.glassSize);
-      gl.uniform1i(uniforms.uMode, effectToMode(preset.effect));
+      gl.uniform1f(uniforms.uSpeed, currentPreset.speed);
+      gl.uniform1f(uniforms.uDistortion, currentPreset.distortion);
+      gl.uniform1f(uniforms.uNoise, currentPreset.noise);
+      gl.uniform1i(uniforms.uMode, effectToMode(currentPreset.effect));
+
+      gl.uniform2f(uniforms.uGasDirection, 1.0, 0.35 + currentPreset.distortion * 0.65);
+      gl.uniform1f(uniforms.uGasBandStrength, currentPreset.noise * 0.8);
+
+      gl.uniform1f(uniforms.uLiquidGlassIntensity, liquid?.intensity ?? 0);
+      gl.uniform1f(uniforms.uRibbedEnabled, ribbed ? 1 : 0);
+      gl.uniform1f(uniforms.uRibbedIntensity, ribbed?.intensity ?? 0);
+      gl.uniform1f(uniforms.uRibbedFrequency, ribbed?.frequency ?? 8);
+      gl.uniform1f(uniforms.uRibbedAngle, ribbed?.angle ?? 0);
+      gl.uniform1i(uniforms.uRibbedMode, ribbed ? ribbedModeToInt(ribbed.mode) : 0);
+
+      gl.uniform1f(uniforms.uChromaticEnabled, chromatic ? 1 : 0);
+      gl.uniform1f(uniforms.uChromaticIntensity, chromatic?.intensity ?? 0);
+      gl.uniform1f(uniforms.uChromaticOffset, chromatic?.offset ?? 0);
+      gl.uniform1i(uniforms.uChromaticMode, chromatic ? chromaticModeToInt(chromatic.mode) : 0);
+
+      gl.uniform1f(uniforms.uPixelGridEnabled, pixelGrid ? 1 : 0);
+      gl.uniform1f(uniforms.uPixelGridSize, pixelGrid?.size ?? 32);
+      gl.uniform1f(uniforms.uPixelGridLineStrength, pixelGrid?.lineStrength ?? 0);
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       animationRef.current = requestAnimationFrame(render);
@@ -173,7 +258,7 @@ export function ShaderCanvas({ preset, colors }: ShaderCanvasProps): JSX.Element
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
     };
-  }, [preset, colors]);
+  }, []);
 
   return (
     <div className="shader-canvas-wrap">

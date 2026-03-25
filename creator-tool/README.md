@@ -33,3 +33,13 @@ npm run dev
 - Click **Load preset JSON** in Preset Library.
 - Choose a preset JSON file.
 - The tool imports it into the current session and selects it for editing.
+- Legacy v1 presets are migrated on import (`liquid` -> `flow`, `glass/glassSize` -> `overlays.liquidGlass`).
+
+## V1.1 controls
+
+- Base effects: `flow`, `burn`, `gas`.
+- Overlay controls:
+  - `liquidGlass`
+  - `ribbedGlass`
+  - `chromaticAberration`
+  - `pixelGrid`

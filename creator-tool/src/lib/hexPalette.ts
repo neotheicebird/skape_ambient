@@ -65,20 +65,27 @@ export async function loadProjectHexPalettes(): Promise<{ palettes: Palette[]; e
   };
 
   const errors: string[] = [];
-  const palettes: Palette[] = [];
+  const paletteByName = new Map<string, Palette>();
 
   for (const [path, raw] of Object.entries(files)) {
     const lastSegment = path.split("/").pop() ?? path;
     const fileName = lastSegment.split("?")[0] ?? lastSegment;
     const paletteName = fileName.replace(/\.hex$/i, "");
+
+    const paletteKey = paletteName.toLowerCase();
+    if (paletteByName.has(paletteKey)) {
+      continue;
+    }
+
     try {
-      palettes.push(parseHexPalette(raw, paletteName));
+      paletteByName.set(paletteKey, parseHexPalette(raw, paletteName));
     } catch (error) {
       const reason = error instanceof Error ? error.message : "Unknown parse error";
       errors.push(`${fileName}: ${reason}`);
     }
   }
 
+  const palettes = Array.from(paletteByName.values());
   palettes.sort((a, b) => a.name.localeCompare(b.name));
 
   if (palettes.length === 0) {
