@@ -1,0 +1,11 @@
+# Node dependencies
+creator-tool/node_modules/
+
+# Build outputs
+creator-tool/dist/
+
+# Local environment files
+*.local
+
+# macOS Finder metadata
+.DS_Store
