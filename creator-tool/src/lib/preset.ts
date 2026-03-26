@@ -34,19 +34,6 @@ export function createDefaultPreset(paletteName: string): Preset {
   };
 }
 
-function activeOverlayCount(overlays: OverlaySettings | undefined): number {
-  if (!overlays) {
-    return 0;
-  }
-
-  return [
-    overlays.liquidGlass,
-    overlays.ribbedGlass,
-    overlays.chromaticAberration,
-    overlays.pixelGrid
-  ].filter(Boolean).length;
-}
-
 export function validatePreset(preset: Preset, palettes: Palette[]): string[] {
   const errors: string[] = [];
 
@@ -75,9 +62,6 @@ export function validatePreset(preset: Preset, palettes: Palette[]): string[] {
   }
 
   const overlays = preset.overlays;
-  if (activeOverlayCount(overlays) > 3) {
-    errors.push("Use at most 3 overlays per preset for performance guardrails.");
-  }
 
   if (overlays?.liquidGlass) {
     if (overlays.liquidGlass.intensity < 0 || overlays.liquidGlass.intensity > 1) {
@@ -110,6 +94,13 @@ export function validatePreset(preset: Preset, palettes: Palette[]): string[] {
     if (overlays.pixelGrid.lineStrength < 0 || overlays.pixelGrid.lineStrength > 1) {
       errors.push("Pixel grid line strength must be between 0 and 1.");
     }
+  }
+
+  if (
+    preset.performanceScore !== undefined &&
+    (typeof preset.performanceScore !== "number" || Number.isNaN(preset.performanceScore))
+  ) {
+    errors.push("Performance score must be a number when provided.");
   }
 
   return errors;
@@ -257,6 +248,11 @@ export function parseImportedPresetJson(rawJson: string): ParsedPresetResult {
     }
   }
 
+  let performanceScore: number | undefined;
+  if (record.performanceScore !== undefined) {
+    performanceScore = expectNumber(record, "performanceScore");
+  }
+
   return {
     preset: {
       name: expectString(record, "name"),
@@ -265,7 +261,8 @@ export function parseImportedPresetJson(rawJson: string): ParsedPresetResult {
       speed: expectNumber(record, "speed"),
       distortion: expectNumber(record, "distortion"),
       noise: expectNumber(record, "noise"),
-      overlays
+      overlays,
+      performanceScore
     },
     warnings
   };

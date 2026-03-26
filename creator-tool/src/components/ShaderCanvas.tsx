@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
+import {
+  DEFAULT_FPS_CAP,
+  DEFAULT_RESOLUTION_SCALE,
+  HIGH_QUALITY_FPS_CAP,
+  HIGH_QUALITY_RESOLUTION_SCALE
+} from "../lib/performance";
 import type { Preset } from "../types";
 import {
   chromaticModeToInt,
@@ -14,6 +20,7 @@ type ShaderCanvasProps = {
   preset: Preset;
   colors: string[];
   paused?: boolean;
+  qualityMode?: "default" | "high";
 };
 
 type UniformLocations = {
@@ -113,12 +120,18 @@ function getUniformLocations(gl: WebGLRenderingContext, program: WebGLProgram): 
   };
 }
 
-export function ShaderCanvas({ preset, colors, paused = false }: ShaderCanvasProps): JSX.Element {
+export function ShaderCanvas({
+  preset,
+  colors,
+  paused = false,
+  qualityMode = "default"
+}: ShaderCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const presetRef = useRef<Preset>(preset);
   const colorsRef = useRef<string[]>(colors);
   const pausedRef = useRef<boolean>(paused);
+  const qualityModeRef = useRef<"default" | "high">(qualityMode);
   const [shaderError, setShaderError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -132,6 +145,10 @@ export function ShaderCanvas({ preset, colors, paused = false }: ShaderCanvasPro
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  useEffect(() => {
+    qualityModeRef.current = qualityMode;
+  }, [qualityMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -175,21 +192,50 @@ export function ShaderCanvas({ preset, colors, paused = false }: ShaderCanvasPro
     const uniforms = getUniformLocations(gl, program);
     let simulatedTime = 0;
     let previousNow: number | null = null;
+    let lastDrawNow: number | null = null;
+    let isTabVisible = document.visibilityState !== "hidden";
+    let isCanvasVisible = true;
+
+    const handleVisibilityChange = (): void => {
+      isTabVisible = document.visibilityState !== "hidden";
+      previousNow = null;
+      lastDrawNow = null;
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    let observer: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver === "function") {
+      observer = new IntersectionObserver(
+        (entries) => {
+          const entry = entries[0];
+          isCanvasVisible = Boolean(entry?.isIntersecting);
+          previousNow = null;
+          lastDrawNow = null;
+        },
+        { threshold: 0.01 }
+      );
+      observer.observe(canvas);
+    }
 
     const render = (now: number): void => {
       const currentPreset = presetRef.current;
       const currentColors = colorsRef.current;
+      const currentQuality = qualityModeRef.current;
+      const fpsCap = currentQuality === "high" ? HIGH_QUALITY_FPS_CAP : DEFAULT_FPS_CAP;
+      const resolutionScale =
+        currentQuality === "high" ? HIGH_QUALITY_RESOLUTION_SCALE : DEFAULT_RESOLUTION_SCALE;
+      const frameIntervalMs = 1000 / fpsCap;
+      const canDraw = isTabVisible && isCanvasVisible;
 
       const pixelRatio = window.devicePixelRatio || 1;
-      const width = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio));
-      const height = Math.max(1, Math.floor(canvas.clientHeight * pixelRatio));
+      const width = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio * resolutionScale));
+      const height = Math.max(1, Math.floor(canvas.clientHeight * pixelRatio * resolutionScale));
 
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
       }
-
-      gl.viewport(0, 0, width, height);
 
       if (previousNow === null) {
         previousNow = now;
@@ -197,6 +243,20 @@ export function ShaderCanvas({ preset, colors, paused = false }: ShaderCanvasPro
 
       const deltaSeconds = Math.max(0, (now - previousNow) / 1000);
       previousNow = now;
+
+      if (!canDraw) {
+        animationRef.current = requestAnimationFrame(render);
+        return;
+      }
+
+      if (lastDrawNow !== null && now - lastDrawNow < frameIntervalMs) {
+        animationRef.current = requestAnimationFrame(render);
+        return;
+      }
+
+      lastDrawNow = now;
+
+      gl.viewport(0, 0, width, height);
 
       if (!pausedRef.current) {
         simulatedTime += deltaSeconds;
@@ -255,6 +315,8 @@ export function ShaderCanvas({ preset, colors, paused = false }: ShaderCanvasPro
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
+      observer?.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
     };

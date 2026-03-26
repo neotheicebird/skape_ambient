@@ -3,6 +3,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ShaderCanvas } from "./components/ShaderCanvas";
 import { loadProjectHexPalettes } from "./lib/hexPalette";
 import {
+  MAX_PERFORMANCE_BUDGET,
+  activeOverlayCount,
+  calculatePerformanceScore,
+  getPerformanceLevel
+} from "./lib/performance";
+import {
   createDefaultPreset,
   getShaderColors,
   parseImportedPresetJson,
@@ -80,6 +86,13 @@ function isRangeInputTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement && target.type === "range";
 }
 
+function applyPerformanceMetadata(preset: Preset): Preset {
+  return {
+    ...preset,
+    performanceScore: calculatePerformanceScore(preset)
+  };
+}
+
 export default function App(): JSX.Element {
   const [palettes, setPalettes] = useState<Palette[]>([]);
   const [paletteErrors, setPaletteErrors] = useState<string[]>([]);
@@ -108,7 +121,7 @@ export default function App(): JSX.Element {
       setPaletteErrors(errors);
 
       if (loadedPalettes.length > 0 && presets.length === 0) {
-        setPresets([createDefaultPreset(loadedPalettes[0].name)]);
+        setPresets([applyPerformanceMetadata(createDefaultPreset(loadedPalettes[0].name))]);
         setSelectedPresetIndex(0);
       }
     } catch (error) {
@@ -136,7 +149,9 @@ export default function App(): JSX.Element {
   }, [isAdjustingControl]);
 
   function setCurrentPreset(nextPreset: Preset): void {
-    setPresets((current) => updatePresetAtIndex(current, selectedPresetIndex, nextPreset));
+    setPresets((current) =>
+      updatePresetAtIndex(current, selectedPresetIndex, applyPerformanceMetadata(nextPreset))
+    );
   }
 
   function patchCurrentPreset(patch: (preset: Preset) => Preset): void {
@@ -179,7 +194,10 @@ export default function App(): JSX.Element {
     }
 
     const nextPreset = createDefaultPreset(palettes[0].name);
-    setPresets((current) => [...current, { ...nextPreset, name: `preset-${current.length + 1}` }]);
+    setPresets((current) => [
+      ...current,
+      applyPerformanceMetadata({ ...nextPreset, name: `preset-${current.length + 1}` })
+    ]);
     setSelectedPresetIndex(presets.length);
     setValidationErrors([]);
   }
@@ -203,17 +221,18 @@ export default function App(): JSX.Element {
         );
       }
 
-      const errors = validatePreset(normalizedPreset, palettes);
+      const scoredPreset = applyPerformanceMetadata(normalizedPreset);
+      const errors = validatePreset(scoredPreset, palettes);
       setValidationErrors(errors);
 
-      const nextPresets = [...presets, normalizedPreset];
+      const nextPresets = [...presets, scoredPreset];
       setPresets(nextPresets);
       setSelectedPresetIndex(nextPresets.length - 1);
 
       if (warnings.length > 0) {
-        setImportStatus(`Loaded "${normalizedPreset.name}" with migration notes: ${warnings.join(" ")}`);
+        setImportStatus(`Loaded "${scoredPreset.name}" with migration notes: ${warnings.join(" ")}`);
       } else {
-        setImportStatus(`Loaded preset "${normalizedPreset.name}" from ${file.name}.`);
+        setImportStatus(`Loaded preset "${scoredPreset.name}" from ${file.name}.`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown preset import error.";
@@ -233,7 +252,7 @@ export default function App(): JSX.Element {
 
     try {
       const picker = (
-        window as {
+        window as unknown as {
           showDirectoryPicker: (options?: { mode?: "read" | "readwrite" }) => Promise<DirectoryHandleLike>;
         }
       ).showDirectoryPicker;
@@ -280,16 +299,17 @@ export default function App(): JSX.Element {
       return;
     }
 
-    const errors = validatePreset(selectedPreset, palettes);
+    const exportPreset = applyPerformanceMetadata(selectedPreset);
+    const errors = validatePreset(exportPreset, palettes);
     setValidationErrors(errors);
 
     if (errors.length > 0) {
       return;
     }
 
-    const fileStem = sanitizePresetName(selectedPreset.name);
+    const fileStem = sanitizePresetName(exportPreset.name);
     const fileName = `${fileStem}.json`;
-    const content = serializePreset(selectedPreset);
+    const content = serializePreset(exportPreset);
 
     if (presetsDirectoryHandle) {
       try {
@@ -313,6 +333,11 @@ export default function App(): JSX.Element {
   const ribbedEnabled = Boolean(overlays.ribbedGlass);
   const chromaticEnabled = Boolean(overlays.chromaticAberration);
   const pixelGridEnabled = Boolean(overlays.pixelGrid);
+  const performanceScore = selectedPreset ? calculatePerformanceScore(selectedPreset) : 0;
+  const performanceLevel = getPerformanceLevel(performanceScore);
+  const overlayCount = activeOverlayCount(selectedPreset?.overlays);
+  const isOverBudget = performanceScore > MAX_PERFORMANCE_BUDGET;
+  const isBeyondRecommendedOverlayCount = overlayCount > 2;
 
   return (
     <main className="layout">
@@ -390,6 +415,26 @@ export default function App(): JSX.Element {
 
           {importStatus && <p className="status-note">{importStatus}</p>}
         </div>
+
+        {selectedPreset && (
+          <div className="card performance-card">
+            <h2>Performance</h2>
+            <p className={`performance-score performance-${performanceLevel.toLowerCase().replace(" ", "-")}`}>
+              Performance Score: {performanceScore} / {MAX_PERFORMANCE_BUDGET} ({performanceLevel})
+            </p>
+            <p className="hint">Recommended composition: 1 base effect with 0-2 overlays.</p>
+            {isBeyondRecommendedOverlayCount && (
+              <p className="performance-warning">
+                Advisory: this preset uses more than 2 overlays and may be harder to keep lightweight.
+              </p>
+            )}
+            {isOverBudget && (
+              <p className="performance-warning">
+                This preset may impact performance on some devices.
+              </p>
+            )}
+          </div>
+        )}
 
         {selectedPreset && (
           <div

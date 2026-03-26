@@ -150,6 +150,35 @@ button:disabled {
   color: #b8d8ff;
 }
 
+.performance-card {
+  gap: 0.35rem;
+}
+
+.performance-score {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.performance-light {
+  color: #8de0a6;
+}
+
+.performance-balanced {
+  color: #ffd17a;
+}
+
+.performance-heavy,
+.performance-over-budget {
+  color: #ff9b9b;
+}
+
+.performance-warning {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #ffb8b8;
+}
+
 .error-list ul,
 .validation-errors {
   margin: 0;

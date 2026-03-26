@@ -37,6 +37,7 @@ export type Preset = {
   distortion: number;
   noise: number;
   overlays?: OverlaySettings;
+  performanceScore?: number;
 };
 
 export type Palette = {

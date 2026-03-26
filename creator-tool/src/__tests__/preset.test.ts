@@ -34,7 +34,7 @@ describe("preset helpers", () => {
     expect(errors).toContain("Speed must be between 0 and 4.");
   });
 
-  it("enforces overlay-count guardrail", () => {
+  it("keeps overlay stacking advisory-only for validation", () => {
     const preset = {
       ...createDefaultPreset("moss"),
       overlays: {
@@ -46,7 +46,7 @@ describe("preset helpers", () => {
     };
 
     const errors = validatePreset(preset, palettes);
-    expect(errors).toContain("Use at most 3 overlays per preset for performance guardrails.");
+    expect(errors).toEqual([]);
   });
 
   it("serializes JSON with trailing newline", () => {
@@ -76,6 +76,22 @@ describe("preset helpers", () => {
     expect(result.preset.name).toBe("loaded");
     expect(result.preset.effect).toBe("flow");
     expect(result.warnings).toEqual([]);
+  });
+
+  it("parses optional performanceScore metadata", () => {
+    const result = parseImportedPresetJson(
+      JSON.stringify({
+        name: "with-score",
+        palette: "moss",
+        effect: "burn",
+        speed: 1,
+        distortion: 0.4,
+        noise: 0.6,
+        performanceScore: 4
+      })
+    );
+
+    expect(result.preset.performanceScore).toBe(4);
   });
 
   it("migrates legacy liquid effect and glass fields", () => {
