@@ -1,4 +1,4 @@
-import type { ChromaticAberration, EffectMode, RibbedGlass } from "../types";
+import type { ChromaticAberration, EffectMode, TextureId } from "../types";
 
 export const vertexShaderSource = `
 attribute vec2 a_position;
@@ -22,16 +22,6 @@ uniform float u_distortion;
 uniform float u_noise;
 uniform int u_mode;
 
-uniform vec2 u_gasDirection;
-uniform float u_gasBandStrength;
-
-uniform float u_liquidGlassIntensity;
-uniform float u_ribbedEnabled;
-uniform float u_ribbedIntensity;
-uniform float u_ribbedFrequency;
-uniform float u_ribbedAngle;
-uniform int u_ribbedMode;
-
 uniform float u_chromaticEnabled;
 uniform float u_chromaticIntensity;
 uniform float u_chromaticOffset;
@@ -41,18 +31,26 @@ uniform float u_pixelGridEnabled;
 uniform float u_pixelGridSize;
 uniform float u_pixelGridLineStrength;
 
-float hash(vec2 p) {
+uniform float u_textureEnabled;
+uniform int u_textureId;
+uniform float u_textureScale;
+uniform float u_textureIntensity;
+uniform float u_textureDistortion;
+
+uniform float u_grainIntensity;
+
+float hash21(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
-float noise(vec2 p) {
+float valueNoise(vec2 p) {
   vec2 i = floor(p);
   vec2 f = fract(p);
 
-  float a = hash(i);
-  float b = hash(i + vec2(1.0, 0.0));
-  float c = hash(i + vec2(0.0, 1.0));
-  float d = hash(i + vec2(1.0, 1.0));
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
 
   vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
@@ -62,17 +60,31 @@ float fbm(vec2 p) {
   float value = 0.0;
   float amp = 0.5;
   for (int i = 0; i < 4; i++) {
-    value += amp * noise(p);
+    value += amp * valueNoise(p);
     p *= 2.0;
     amp *= 0.5;
   }
   return value;
 }
 
-vec2 rotate2d(vec2 v, float angle) {
-  float s = sin(angle);
-  float c = cos(angle);
-  return vec2(c * v.x - s * v.y, s * v.x + c * v.y);
+float worley(vec2 p) {
+  vec2 cell = floor(p);
+  vec2 local = fract(p);
+  float minDist = 1.0;
+
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 neighbor = vec2(float(x), float(y));
+      vec2 point = vec2(
+        hash21(cell + neighbor + vec2(0.37, 0.91)),
+        hash21(cell + neighbor + vec2(1.73, 2.11))
+      );
+      vec2 diff = neighbor + point - local;
+      minDist = min(minDist, length(diff));
+    }
+  }
+
+  return minDist;
 }
 
 vec3 getPaletteColor(float t) {
@@ -106,6 +118,37 @@ vec3 getPaletteColor(float t) {
   return c5;
 }
 
+float texturePattern(vec2 uv, int textureId) {
+  if (textureId == 0) {
+    return 0.5 + 0.5 * sin(uv.x * 40.0);
+  }
+
+  if (textureId == 1) {
+    return 0.5 + 0.5 * sin(uv.x * 16.0);
+  }
+
+  if (textureId == 2) {
+    return 0.5 + 0.5 * sin((uv.x + uv.y) * 24.0);
+  }
+
+  if (textureId == 3) {
+    return fbm(uv * 5.0);
+  }
+
+  return hash21(floor(uv * 120.0));
+}
+
+vec2 applyTextureUvDistortion(vec2 uv, float t) {
+  if (u_textureEnabled < 0.5 || u_textureDistortion <= 0.001) {
+    return uv;
+  }
+
+  vec2 texUv = uv * max(0.1, u_textureScale) + vec2(t * 0.04, -t * 0.03);
+  float p = texturePattern(texUv, u_textureId);
+  vec2 offset = vec2(p - 0.5, 0.5 - p) * (0.03 * clamp(u_textureDistortion, 0.0, 1.0));
+  return uv + offset;
+}
+
 float baseField(vec2 uv, float t) {
   vec2 warped = uv;
   vec2 warp = vec2(
@@ -120,47 +163,33 @@ float baseField(vec2 uv, float t) {
   }
 
   if (u_mode == 1) {
+    // gas
+    vec2 dir = normalize(vec2(1.0, 0.35 + u_distortion * 0.65));
+    vec2 stretched = vec2(dot(warped, dir) * 3.4, dot(warped, vec2(-dir.y, dir.x)) * 1.15);
+    float signal = fbm(stretched + vec2(t * 0.16, -t * 0.06));
+    float softBands = 0.5 + 0.5 * sin((stretched.y + t * 0.24) * 10.0);
+    return mix(signal, signal * (0.65 + 0.35 * softBands), clamp(u_noise, 0.0, 1.0));
+  }
+
+  if (u_mode == 2) {
     // burn
     float signal = fbm(warped * (4.2 + u_noise));
     float threshold = 0.45 + 0.2 * sin(t * 0.65);
     return smoothstep(threshold - 0.08, threshold + 0.08, signal);
   }
 
-  // gas
-  vec2 dir = normalize(u_gasDirection);
-  vec2 stretched = vec2(dot(warped, dir) * 3.4, dot(warped, vec2(-dir.y, dir.x)) * 1.15);
-  float signal = fbm(stretched + vec2(t * 0.16, -t * 0.06));
-  if (u_gasBandStrength > 0.001) {
-    float bands = 0.5 + 0.5 * sin((stretched.y + t * 0.24) * 12.0);
-    signal = mix(signal, signal * (0.65 + 0.35 * bands), clamp(u_gasBandStrength, 0.0, 1.0));
-  }
-  return signal;
-}
-
-vec2 applyOverlayUvDistortion(vec2 uv, float t) {
-  vec2 outUv = uv;
-
-  if (u_liquidGlassIntensity > 0.001) {
-    vec2 ripple = vec2(
-      sin((outUv.y + t * 0.4) * 18.0),
-      cos((outUv.x - t * 0.35) * 14.0)
-    );
-    outUv += ripple * (0.015 * u_liquidGlassIntensity);
+  if (u_mode == 3) {
+    // bands
+    float stripe = 0.5 + 0.5 * sin((warped.x + fbm(warped * 2.6 + vec2(t * 0.1, 0.0)) * 0.35) * (8.0 + u_noise * 18.0));
+    float compressed = pow(stripe, mix(1.0, 2.8, clamp(u_distortion, 0.0, 1.0)));
+    return compressed;
   }
 
-  if (u_ribbedEnabled > 0.5 && u_ribbedIntensity > 0.001) {
-    vec2 centered = outUv - 0.5;
-    vec2 rotated = rotate2d(centered, radians(u_ribbedAngle));
-    if (u_ribbedMode == 0) {
-      rotated.x += sin(rotated.y * u_ribbedFrequency) * (0.03 * u_ribbedIntensity);
-    } else {
-      vec2 cells = floor(rotated * u_ribbedFrequency) / max(u_ribbedFrequency, 1.0);
-      rotated = mix(rotated, cells, clamp(u_ribbedIntensity, 0.0, 1.0));
-    }
-    outUv = rotate2d(rotated, -radians(u_ribbedAngle)) + 0.5;
-  }
-
-  return outUv;
+  // cellular
+  float cells = worley(warped * (3.0 + u_noise * 3.0) + vec2(t * 0.1, -t * 0.08));
+  float inverted = 1.0 - clamp(cells * 1.65, 0.0, 1.0);
+  float detail = fbm(warped * 3.2 + vec2(-t * 0.06, t * 0.07));
+  return mix(inverted, inverted * (0.75 + 0.25 * detail), 0.45);
 }
 
 float getGridLineMask(vec2 uv) {
@@ -181,7 +210,7 @@ void main() {
 
   float t = u_time * u_speed;
 
-  vec2 sampleUv = applyOverlayUvDistortion(uv, t);
+  vec2 sampleUv = applyTextureUvDistortion(uv, t);
 
   if (u_pixelGridEnabled > 0.5 && u_pixelGridSize >= 1.0) {
     sampleUv = floor(sampleUv * u_pixelGridSize) / u_pixelGridSize + (0.5 / u_pixelGridSize);
@@ -189,6 +218,13 @@ void main() {
 
   float signal = baseField(sampleUv, t);
   vec3 color = getPaletteColor(signal);
+
+  if (u_textureEnabled > 0.5 && u_textureIntensity > 0.001) {
+    vec2 texUv = sampleUv * max(0.1, u_textureScale) + vec2(t * 0.03, -t * 0.02);
+    float p = texturePattern(texUv, u_textureId);
+    float modulation = mix(1.0, 0.6 + 0.8 * p, clamp(u_textureIntensity, 0.0, 1.0));
+    color *= modulation;
+  }
 
   if (u_chromaticEnabled > 0.5 && u_chromaticIntensity > 0.001) {
     vec2 offsetDir = vec2(1.0, 0.0);
@@ -214,6 +250,9 @@ void main() {
     color = mix(color, color * 0.55, gridMask);
   }
 
+  float grain = (hash21(gl_FragCoord.xy + vec2(t * 61.7, t * 37.1)) - 0.5) * clamp(u_grainIntensity, 0.0, 1.0);
+  color = clamp(color + vec3(grain), 0.0, 1.0);
+
   gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -222,19 +261,34 @@ export function effectToMode(effect: EffectMode): number {
   switch (effect) {
     case "flow":
       return 0;
-    case "burn":
-      return 1;
     case "gas":
+      return 1;
+    case "burn":
       return 2;
+    case "bands":
+      return 3;
+    case "cellular":
+      return 4;
   }
-}
-
-export function ribbedModeToInt(mode: RibbedGlass["mode"]): number {
-  return mode === "grid" ? 1 : 0;
 }
 
 export function chromaticModeToInt(mode: ChromaticAberration["mode"]): number {
   return mode === "directional" ? 1 : 0;
+}
+
+export function textureIdToInt(textureId: TextureId): number {
+  switch (textureId) {
+    case "ribbed-fine":
+      return 0;
+    case "ribbed-wide":
+      return 1;
+    case "ribbed-diagonal":
+      return 2;
+    case "frosted-soft":
+      return 3;
+    case "grain":
+      return 4;
+  }
 }
 
 export function hexToRgbVector(hex: string): [number, number, number] {

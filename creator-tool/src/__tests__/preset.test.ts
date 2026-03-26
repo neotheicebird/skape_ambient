@@ -38,8 +38,7 @@ describe("preset helpers", () => {
     const preset = {
       ...createDefaultPreset("moss"),
       overlays: {
-        liquidGlass: { intensity: 0.3 },
-        ribbedGlass: { intensity: 0.4, frequency: 12, angle: 0, mode: "linear" as const },
+        textureOverlay: { texture: "frosted-soft" as const, scale: 3, intensity: 0.3, distortion: 0.1 },
         chromaticAberration: { intensity: 0.2, offset: 0.1, mode: "radial" as const },
         pixelGrid: { size: 24, lineStrength: 0.2 }
       }
@@ -58,7 +57,7 @@ describe("preset helpers", () => {
     expect(sanitizePresetName("  Liquid Ember v1! ")).toBe("liquid-ember-v1");
   });
 
-  it("parses imported v1.1 preset json", () => {
+  it("parses imported v1.3 preset json", () => {
     const result = parseImportedPresetJson(
       JSON.stringify({
         name: "loaded",
@@ -68,7 +67,11 @@ describe("preset helpers", () => {
         distortion: 0.4,
         noise: 0.6,
         overlays: {
-          liquidGlass: { intensity: 0.35 }
+          textureOverlay: {
+            texture: "frosted-soft",
+            scale: 3,
+            intensity: 0.35
+          }
         }
       })
     );
@@ -109,7 +112,27 @@ describe("preset helpers", () => {
     );
 
     expect(result.preset.effect).toBe("flow");
-    expect(result.preset.overlays?.liquidGlass?.intensity).toBe(0.5);
+    expect(result.preset.overlays?.textureOverlay?.texture).toBe("frosted-soft");
+    expect(result.preset.overlays?.textureOverlay?.intensity).toBe(0.5);
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("migrates legacy ribbed overlay to texture overlay", () => {
+    const result = parseImportedPresetJson(
+      JSON.stringify({
+        name: "legacy-ribbed",
+        palette: "moss",
+        effect: "burn",
+        speed: 1,
+        distortion: 0.4,
+        noise: 0.6,
+        overlays: {
+          ribbedGlass: { intensity: 0.4, frequency: 12, angle: 0, mode: "linear" }
+        }
+      })
+    );
+
+    expect(result.preset.overlays?.textureOverlay?.texture).toBe("ribbed-fine");
     expect(result.warnings.length).toBeGreaterThan(0);
   });
 
@@ -125,6 +148,6 @@ describe("preset helpers", () => {
           noise: 0.6
         })
       )
-    ).toThrow('Preset field "effect" must be one of: flow, burn, gas.');
+    ).toThrow('Preset field "effect" must be one of: flow, gas, burn, bands, cellular.');
   });
 });

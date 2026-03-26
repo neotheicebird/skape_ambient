@@ -12,7 +12,7 @@ describe("performance helpers", () => {
     const score = calculatePerformanceScore({
       effect: "burn",
       overlays: {
-        liquidGlass: { intensity: 0.2 },
+        textureOverlay: { texture: "frosted-soft", scale: 3, intensity: 0.3 },
         chromaticAberration: { intensity: 0.2, offset: 0.1, mode: "radial" }
       }
     });
@@ -24,7 +24,7 @@ describe("performance helpers", () => {
     expect(activeOverlayCount(undefined)).toBe(0);
     expect(
       activeOverlayCount({
-        liquidGlass: { intensity: 0.2 },
+        textureOverlay: { texture: "frosted-soft", scale: 3, intensity: 0.2 },
         pixelGrid: { size: 24, lineStrength: 0.2 }
       })
     ).toBe(2);

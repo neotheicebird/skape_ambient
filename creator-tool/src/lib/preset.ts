@@ -1,15 +1,8 @@
-import type {
-  ChromaticAberration,
-  LiquidGlass,
-  OverlaySettings,
-  Palette,
-  PixelGrid,
-  Preset,
-  RibbedGlass
-} from "../types";
+import { TEXTURE_IDS, type ChromaticAberration, type OverlaySettings, type Palette, type PixelGrid, type Preset, type TextureId, type TextureOverlay } from "../types";
 
 export const MAX_SHADER_COLORS = 6;
-const EFFECT_MODES = new Set(["flow", "burn", "gas"]);
+const EFFECT_MODES = new Set(["flow", "gas", "burn", "bands", "cellular"]);
+const TEXTURE_ID_SET = new Set<string>(TEXTURE_IDS);
 
 const DEFAULT_PRESET: Preset = {
   name: "new-preset",
@@ -46,7 +39,7 @@ export function validatePreset(preset: Preset, palettes: Palette[]): string[] {
   }
 
   if (!EFFECT_MODES.has(preset.effect)) {
-    errors.push("Preset effect must be one of: flow, burn, gas.");
+    errors.push("Preset effect must be one of: flow, gas, burn, bands, cellular.");
   }
 
   if (preset.speed < 0 || preset.speed > 4) {
@@ -63,21 +56,6 @@ export function validatePreset(preset: Preset, palettes: Palette[]): string[] {
 
   const overlays = preset.overlays;
 
-  if (overlays?.liquidGlass) {
-    if (overlays.liquidGlass.intensity < 0 || overlays.liquidGlass.intensity > 1) {
-      errors.push("Liquid glass intensity must be between 0 and 1.");
-    }
-  }
-
-  if (overlays?.ribbedGlass) {
-    if (overlays.ribbedGlass.intensity < 0 || overlays.ribbedGlass.intensity > 1) {
-      errors.push("Ribbed glass intensity must be between 0 and 1.");
-    }
-    if (overlays.ribbedGlass.frequency <= 0) {
-      errors.push("Ribbed glass frequency must be greater than 0.");
-    }
-  }
-
   if (overlays?.chromaticAberration) {
     if (overlays.chromaticAberration.intensity < 0 || overlays.chromaticAberration.intensity > 1) {
       errors.push("Chromatic aberration intensity must be between 0 and 1.");
@@ -93,6 +71,24 @@ export function validatePreset(preset: Preset, palettes: Palette[]): string[] {
     }
     if (overlays.pixelGrid.lineStrength < 0 || overlays.pixelGrid.lineStrength > 1) {
       errors.push("Pixel grid line strength must be between 0 and 1.");
+    }
+  }
+
+  if (overlays?.textureOverlay) {
+    if (!TEXTURE_ID_SET.has(overlays.textureOverlay.texture)) {
+      errors.push("Texture overlay texture id is invalid.");
+    }
+    if (overlays.textureOverlay.scale <= 0 || overlays.textureOverlay.scale > 20) {
+      errors.push("Texture overlay scale must be greater than 0 and at most 20.");
+    }
+    if (overlays.textureOverlay.intensity < 0 || overlays.textureOverlay.intensity > 1) {
+      errors.push("Texture overlay intensity must be between 0 and 1.");
+    }
+    if (
+      overlays.textureOverlay.distortion !== undefined &&
+      (overlays.textureOverlay.distortion < 0 || overlays.textureOverlay.distortion > 1)
+    ) {
+      errors.push("Texture overlay distortion must be between 0 and 1 when provided.");
     }
   }
 
@@ -141,26 +137,14 @@ function expectBoolean(record: Record<string, unknown>, key: string): boolean {
   return value;
 }
 
-function parseLiquidGlass(value: unknown): LiquidGlass {
-  const record = expectObject(value);
-  return {
-    intensity: expectNumber(record, "intensity")
-  };
-}
-
-function parseRibbedGlass(value: unknown): RibbedGlass {
-  const record = expectObject(value);
-  const mode = expectString(record, "mode");
-  if (mode !== "linear" && mode !== "grid") {
-    throw new Error('Ribbed glass mode must be "linear" or "grid".');
+function parseTextureId(value: string): TextureId {
+  if (!TEXTURE_ID_SET.has(value)) {
+    throw new Error(
+      `Texture overlay texture must be one of: ${TEXTURE_IDS.join(", ")}.`
+    );
   }
 
-  return {
-    intensity: expectNumber(record, "intensity"),
-    frequency: expectNumber(record, "frequency"),
-    angle: expectNumber(record, "angle"),
-    mode
-  };
+  return value as TextureId;
 }
 
 function parseChromaticAberration(value: unknown): ChromaticAberration {
@@ -185,21 +169,76 @@ function parsePixelGrid(value: unknown): PixelGrid {
   };
 }
 
-function parseOverlays(value: unknown): OverlaySettings {
+function parseTextureOverlay(value: unknown): TextureOverlay {
+  const record = expectObject(value);
+  const texture = parseTextureId(expectString(record, "texture"));
+  const scale = expectNumber(record, "scale");
+  const intensity = expectNumber(record, "intensity");
+  const distortionRaw = record.distortion;
+
+  return {
+    texture,
+    scale,
+    intensity,
+    distortion:
+      distortionRaw === undefined
+        ? undefined
+        : (() => {
+            if (typeof distortionRaw !== "number" || Number.isNaN(distortionRaw)) {
+              throw new Error('Texture overlay field "distortion" must be a number when provided.');
+            }
+            return distortionRaw;
+          })()
+  };
+}
+
+function parseOverlays(value: unknown, warnings: string[]): OverlaySettings {
   const record = expectObject(value);
   const overlays: OverlaySettings = {};
 
-  if (record.liquidGlass !== undefined) {
-    overlays.liquidGlass = parseLiquidGlass(record.liquidGlass);
-  }
-  if (record.ribbedGlass !== undefined) {
-    overlays.ribbedGlass = parseRibbedGlass(record.ribbedGlass);
-  }
   if (record.chromaticAberration !== undefined) {
     overlays.chromaticAberration = parseChromaticAberration(record.chromaticAberration);
   }
   if (record.pixelGrid !== undefined) {
     overlays.pixelGrid = parsePixelGrid(record.pixelGrid);
+  }
+  if (record.textureOverlay !== undefined) {
+    overlays.textureOverlay = parseTextureOverlay(record.textureOverlay);
+  }
+
+  // Legacy v1.1 overlay migration paths.
+  if (record.liquidGlass !== undefined) {
+    const legacy = expectObject(record.liquidGlass);
+    const intensity = expectNumber(legacy, "intensity");
+    if (!overlays.textureOverlay) {
+      overlays.textureOverlay = {
+        texture: "frosted-soft",
+        scale: 3,
+        intensity,
+        distortion: 0.12
+      };
+    }
+    warnings.push('Legacy overlay "liquidGlass" migrated to overlays.textureOverlay (frosted-soft).');
+  }
+
+  if (record.ribbedGlass !== undefined) {
+    const legacy = expectObject(record.ribbedGlass);
+    const intensity = expectNumber(legacy, "intensity");
+    const frequency = expectNumber(legacy, "frequency");
+    const mode = expectString(legacy, "mode");
+    if (mode !== "linear" && mode !== "grid") {
+      throw new Error('Ribbed glass mode must be "linear" or "grid".');
+    }
+
+    if (!overlays.textureOverlay) {
+      overlays.textureOverlay = {
+        texture: mode === "grid" ? "ribbed-wide" : "ribbed-fine",
+        scale: Math.max(0.5, Math.min(8, frequency / 8)),
+        intensity,
+        distortion: 0.1
+      };
+    }
+    warnings.push('Legacy overlay "ribbedGlass" migrated to overlays.textureOverlay.');
   }
 
   return overlays;
@@ -215,7 +254,7 @@ function parseEffectWithLegacySupport(effectRaw: string, warnings: string[]): Pr
     return "flow";
   }
 
-  throw new Error('Preset field "effect" must be one of: flow, burn, gas.');
+  throw new Error('Preset field "effect" must be one of: flow, gas, burn, bands, cellular.');
 }
 
 export function parseImportedPresetJson(rawJson: string): ParsedPresetResult {
@@ -232,19 +271,24 @@ export function parseImportedPresetJson(rawJson: string): ParsedPresetResult {
 
   let overlays: OverlaySettings = {};
   if (record.overlays !== undefined) {
-    overlays = parseOverlays(record.overlays);
+    overlays = parseOverlays(record.overlays, warnings);
   }
 
-  // Legacy v1 migration path
+  // Legacy v1 migration path.
   if (record.glass !== undefined || record.glassSize !== undefined) {
     const glass = record.glass === undefined ? false : expectBoolean(record, "glass");
     const glassSize = record.glassSize === undefined ? 0.25 : expectNumber(record, "glassSize");
-    if (glass) {
+    if (glass && !overlays.textureOverlay) {
       overlays = {
         ...overlays,
-        liquidGlass: overlays.liquidGlass ?? { intensity: glassSize }
+        textureOverlay: {
+          texture: "frosted-soft",
+          scale: 3,
+          intensity: glassSize,
+          distortion: 0.12
+        }
       };
-      warnings.push("Legacy glass fields migrated to overlays.liquidGlass.");
+      warnings.push("Legacy glass fields migrated to overlays.textureOverlay.");
     }
   }
 

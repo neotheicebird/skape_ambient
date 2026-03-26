@@ -9,13 +9,14 @@ export const MAX_PERFORMANCE_BUDGET = 5;
 
 export const BASE_EFFECT_COST: Record<Preset["effect"], number> = {
   flow: 1,
+  gas: 3,
   burn: 2,
-  gas: 3
+  bands: 2,
+  cellular: 3
 };
 
 export const OVERLAY_COST = {
-  liquidGlass: 1,
-  ribbedGlass: 1,
+  textureOverlay: 1,
   pixelGrid: 1,
   chromaticAberration: 2
 } as const;
@@ -28,10 +29,9 @@ export function activeOverlayCount(overlays: OverlaySettings | undefined): numbe
   }
 
   return [
-    overlays.liquidGlass,
-    overlays.ribbedGlass,
     overlays.chromaticAberration,
-    overlays.pixelGrid
+    overlays.pixelGrid,
+    overlays.textureOverlay
   ].filter(Boolean).length;
 }
 
@@ -43,17 +43,14 @@ export function calculatePerformanceScore(preset: Pick<Preset, "effect" | "overl
     return score;
   }
 
-  if (overlays.liquidGlass) {
-    score += OVERLAY_COST.liquidGlass;
-  }
-  if (overlays.ribbedGlass) {
-    score += OVERLAY_COST.ribbedGlass;
-  }
   if (overlays.pixelGrid) {
     score += OVERLAY_COST.pixelGrid;
   }
   if (overlays.chromaticAberration) {
     score += OVERLAY_COST.chromaticAberration;
+  }
+  if (overlays.textureOverlay) {
+    score += OVERLAY_COST.textureOverlay;
   }
 
   return score;

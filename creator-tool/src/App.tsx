@@ -16,7 +16,7 @@ import {
   serializePreset,
   validatePreset
 } from "./lib/preset";
-import type { OverlaySettings, Palette, Preset, PresetTier } from "./types";
+import { TEXTURE_IDS, type OverlaySettings, type Palette, type Preset, type PresetTier } from "./types";
 
 type WritableStreamLike = {
   write: (data: string | Blob | BufferSource) => Promise<void>;
@@ -36,6 +36,10 @@ type DirectoryHandleLike = {
   queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionStateLike>;
   requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionStateLike>;
 };
+
+const GRAIN_MIN = 0.03;
+const GRAIN_MAX = 0.08;
+const GRAIN_DEFAULT = 0.05;
 
 function downloadTextFile(content: string, fileName: string): void {
   const blob = new Blob([content], { type: "application/json;charset=utf-8" });
@@ -105,6 +109,7 @@ export default function App(): JSX.Element {
   const [exportStatus, setExportStatus] = useState<string>("");
   const [importStatus, setImportStatus] = useState<string>("");
   const [isAdjustingControl, setIsAdjustingControl] = useState(false);
+  const [grainIntensity, setGrainIntensity] = useState(GRAIN_DEFAULT);
   const [overlayMemoryByPreset, setOverlayMemoryByPreset] = useState<Record<number, OverlaySettings>>({});
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -329,8 +334,7 @@ export default function App(): JSX.Element {
   const shaderColors = useMemo(() => getShaderColors(selectedPalette), [selectedPalette]);
 
   const overlays = selectedPreset?.overlays ?? {};
-  const liquidEnabled = Boolean(overlays.liquidGlass);
-  const ribbedEnabled = Boolean(overlays.ribbedGlass);
+  const textureEnabled = Boolean(overlays.textureOverlay);
   const chromaticEnabled = Boolean(overlays.chromaticAberration);
   const pixelGridEnabled = Boolean(overlays.pixelGrid);
   const performanceScore = selectedPreset ? calculatePerformanceScore(selectedPreset) : 0;
@@ -343,7 +347,12 @@ export default function App(): JSX.Element {
     <main className="layout">
       <section className="preview-panel">
         {selectedPreset ? (
-          <ShaderCanvas preset={selectedPreset} colors={shaderColors} paused={isAdjustingControl} />
+          <ShaderCanvas
+            preset={selectedPreset}
+            colors={shaderColors}
+            paused={isAdjustingControl}
+            grainIntensity={grainIntensity}
+          />
         ) : (
           <div className="empty-state">Create a preset after loading palettes.</div>
         )}
@@ -493,8 +502,10 @@ export default function App(): JSX.Element {
                 }
               >
                 <option value="flow">flow</option>
-                <option value="burn">burn</option>
                 <option value="gas">gas</option>
+                <option value="burn">burn</option>
+                <option value="bands">bands</option>
+                <option value="cellular">cellular</option>
               </select>
             </label>
 
@@ -549,103 +560,122 @@ export default function App(): JSX.Element {
               />
             </label>
 
+            <h3 className="subheading">Global Grain</h3>
+            <label>
+              Grain intensity ({grainIntensity.toFixed(3)})
+              <input
+                type="range"
+                min={GRAIN_MIN}
+                max={GRAIN_MAX}
+                step={0.001}
+                value={grainIntensity}
+                onChange={(event) => setGrainIntensity(Number(event.target.value))}
+              />
+            </label>
+
             <h3 className="subheading">Overlays</h3>
 
             <label className="checkbox-row">
               <input
                 type="checkbox"
-                checked={liquidEnabled}
+                checked={textureEnabled}
                 onChange={(event) => {
                   patchOverlays((current) => {
                     const next = { ...current };
                     if (event.target.checked) {
-                      next.liquidGlass =
-                        (getRememberedOverlay("liquidGlass") as OverlaySettings["liquidGlass"]) ??
-                        next.liquidGlass ??
-                        { intensity: 0.25 };
-                    } else {
-                      if (next.liquidGlass) {
-                        rememberOverlaySetting("liquidGlass", next.liquidGlass);
-                      }
-                      delete next.liquidGlass;
-                    }
-                    return next;
-                  });
-                }}
-              />
-              Liquid Glass
-            </label>
-
-            {liquidEnabled && (
-              <label>
-                Liquid intensity ({(overlays.liquidGlass?.intensity ?? 0).toFixed(2)})
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={overlays.liquidGlass?.intensity ?? 0}
-                  onChange={(event) => {
-                    patchOverlays((current) => ({
-                      ...current,
-                      liquidGlass: {
-                        intensity: Number(event.target.value)
-                      }
-                    }));
-                  }}
-                />
-              </label>
-            )}
-
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={ribbedEnabled}
-                onChange={(event) => {
-                  patchOverlays((current) => {
-                    const next = { ...current };
-                    if (event.target.checked) {
-                      next.ribbedGlass =
-                        (getRememberedOverlay("ribbedGlass") as OverlaySettings["ribbedGlass"]) ??
-                        next.ribbedGlass ??
+                      next.textureOverlay =
+                        (getRememberedOverlay("textureOverlay") as OverlaySettings["textureOverlay"]) ??
+                        next.textureOverlay ??
                         {
-                          intensity: 0.25,
-                          frequency: 12,
-                          angle: 0,
-                          mode: "linear"
+                          texture: "frosted-soft",
+                          scale: 3,
+                          intensity: 0.3,
+                          distortion: 0.12
                         };
                     } else {
-                      if (next.ribbedGlass) {
-                        rememberOverlaySetting("ribbedGlass", next.ribbedGlass);
+                      if (next.textureOverlay) {
+                        rememberOverlaySetting("textureOverlay", next.textureOverlay);
                       }
-                      delete next.ribbedGlass;
+                      delete next.textureOverlay;
                     }
                     return next;
                   });
                 }}
               />
-              Ribbed Glass
+              Texture Overlay
             </label>
 
-            {ribbedEnabled && (
+            {textureEnabled && (
               <>
                 <label>
-                  Ribbed intensity ({(overlays.ribbedGlass?.intensity ?? 0).toFixed(2)})
+                  Texture
+                  <select
+                    value={overlays.textureOverlay?.texture ?? "frosted-soft"}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        textureOverlay: {
+                          ...(current.textureOverlay ?? {
+                            texture: "frosted-soft",
+                            scale: 3,
+                            intensity: 0.3,
+                            distortion: 0.12
+                          }),
+                          texture: event.target.value as (typeof TEXTURE_IDS)[number]
+                        }
+                      }));
+                    }}
+                  >
+                    {TEXTURE_IDS.map((textureId) => (
+                      <option key={textureId} value={textureId}>
+                        {textureId}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Texture scale ({(overlays.textureOverlay?.scale ?? 0).toFixed(2)})
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={8}
+                    step={0.05}
+                    value={overlays.textureOverlay?.scale ?? 3}
+                    onChange={(event) => {
+                      patchOverlays((current) => ({
+                        ...current,
+                        textureOverlay: {
+                          ...(current.textureOverlay ?? {
+                            texture: "frosted-soft",
+                            scale: 3,
+                            intensity: 0.3,
+                            distortion: 0.12
+                          }),
+                          scale: Number(event.target.value)
+                        }
+                      }));
+                    }}
+                  />
+                </label>
+
+                <label>
+                  Texture intensity ({(overlays.textureOverlay?.intensity ?? 0).toFixed(2)})
                   <input
                     type="range"
                     min={0}
                     max={1}
                     step={0.01}
-                    value={overlays.ribbedGlass?.intensity ?? 0}
+                    value={overlays.textureOverlay?.intensity ?? 0.3}
                     onChange={(event) => {
                       patchOverlays((current) => ({
                         ...current,
-                        ribbedGlass: {
-                          ...(current.ribbedGlass ?? {
-                            intensity: 0,
-                            frequency: 12,
-                            angle: 0,
-                            mode: "linear"
+                        textureOverlay: {
+                          ...(current.textureOverlay ?? {
+                            texture: "frosted-soft",
+                            scale: 3,
+                            intensity: 0.3,
+                            distortion: 0.12
                           }),
                           intensity: Number(event.target.value)
                         }
@@ -655,77 +685,28 @@ export default function App(): JSX.Element {
                 </label>
 
                 <label>
-                  Ribbed frequency ({(overlays.ribbedGlass?.frequency ?? 0).toFixed(1)})
+                  Texture distortion ({(overlays.textureOverlay?.distortion ?? 0).toFixed(2)})
                   <input
                     type="range"
-                    min={1}
-                    max={60}
-                    step={0.5}
-                    value={overlays.ribbedGlass?.frequency ?? 12}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={overlays.textureOverlay?.distortion ?? 0.12}
                     onChange={(event) => {
                       patchOverlays((current) => ({
                         ...current,
-                        ribbedGlass: {
-                          ...(current.ribbedGlass ?? {
-                            intensity: 0.25,
-                            frequency: 12,
-                            angle: 0,
-                            mode: "linear"
+                        textureOverlay: {
+                          ...(current.textureOverlay ?? {
+                            texture: "frosted-soft",
+                            scale: 3,
+                            intensity: 0.3,
+                            distortion: 0.12
                           }),
-                          frequency: Number(event.target.value)
+                          distortion: Number(event.target.value)
                         }
                       }));
                     }}
                   />
-                </label>
-
-                <label>
-                  Ribbed angle ({(overlays.ribbedGlass?.angle ?? 0).toFixed(0)}°)
-                  <input
-                    type="range"
-                    min={-180}
-                    max={180}
-                    step={1}
-                    value={overlays.ribbedGlass?.angle ?? 0}
-                    onChange={(event) => {
-                      patchOverlays((current) => ({
-                        ...current,
-                        ribbedGlass: {
-                          ...(current.ribbedGlass ?? {
-                            intensity: 0.25,
-                            frequency: 12,
-                            angle: 0,
-                            mode: "linear"
-                          }),
-                          angle: Number(event.target.value)
-                        }
-                      }));
-                    }}
-                  />
-                </label>
-
-                <label>
-                  Ribbed mode
-                  <select
-                    value={overlays.ribbedGlass?.mode ?? "linear"}
-                    onChange={(event) => {
-                      patchOverlays((current) => ({
-                        ...current,
-                        ribbedGlass: {
-                          ...(current.ribbedGlass ?? {
-                            intensity: 0.25,
-                            frequency: 12,
-                            angle: 0,
-                            mode: "linear"
-                          }),
-                          mode: event.target.value as "linear" | "grid"
-                        }
-                      }));
-                    }}
-                  >
-                    <option value="linear">linear</option>
-                    <option value="grid">grid</option>
-                  </select>
                 </label>
               </>
             )}

@@ -12,7 +12,7 @@ import {
   effectToMode,
   fragmentShaderSource,
   hexToRgbVector,
-  ribbedModeToInt,
+  textureIdToInt,
   vertexShaderSource
 } from "../lib/shader";
 
@@ -21,6 +21,7 @@ type ShaderCanvasProps = {
   colors: string[];
   paused?: boolean;
   qualityMode?: "default" | "high";
+  grainIntensity?: number;
 };
 
 type UniformLocations = {
@@ -32,14 +33,6 @@ type UniformLocations = {
   uDistortion: WebGLUniformLocation | null;
   uNoise: WebGLUniformLocation | null;
   uMode: WebGLUniformLocation | null;
-  uGasDirection: WebGLUniformLocation | null;
-  uGasBandStrength: WebGLUniformLocation | null;
-  uLiquidGlassIntensity: WebGLUniformLocation | null;
-  uRibbedEnabled: WebGLUniformLocation | null;
-  uRibbedIntensity: WebGLUniformLocation | null;
-  uRibbedFrequency: WebGLUniformLocation | null;
-  uRibbedAngle: WebGLUniformLocation | null;
-  uRibbedMode: WebGLUniformLocation | null;
   uChromaticEnabled: WebGLUniformLocation | null;
   uChromaticIntensity: WebGLUniformLocation | null;
   uChromaticOffset: WebGLUniformLocation | null;
@@ -47,6 +40,12 @@ type UniformLocations = {
   uPixelGridEnabled: WebGLUniformLocation | null;
   uPixelGridSize: WebGLUniformLocation | null;
   uPixelGridLineStrength: WebGLUniformLocation | null;
+  uTextureEnabled: WebGLUniformLocation | null;
+  uTextureId: WebGLUniformLocation | null;
+  uTextureScale: WebGLUniformLocation | null;
+  uTextureIntensity: WebGLUniformLocation | null;
+  uTextureDistortion: WebGLUniformLocation | null;
+  uGrainIntensity: WebGLUniformLocation | null;
 };
 
 function compileShader(gl: WebGLRenderingContext, type: number, source: string): WebGLShader {
@@ -102,21 +101,19 @@ function getUniformLocations(gl: WebGLRenderingContext, program: WebGLProgram): 
     uDistortion: gl.getUniformLocation(program, "u_distortion"),
     uNoise: gl.getUniformLocation(program, "u_noise"),
     uMode: gl.getUniformLocation(program, "u_mode"),
-    uGasDirection: gl.getUniformLocation(program, "u_gasDirection"),
-    uGasBandStrength: gl.getUniformLocation(program, "u_gasBandStrength"),
-    uLiquidGlassIntensity: gl.getUniformLocation(program, "u_liquidGlassIntensity"),
-    uRibbedEnabled: gl.getUniformLocation(program, "u_ribbedEnabled"),
-    uRibbedIntensity: gl.getUniformLocation(program, "u_ribbedIntensity"),
-    uRibbedFrequency: gl.getUniformLocation(program, "u_ribbedFrequency"),
-    uRibbedAngle: gl.getUniformLocation(program, "u_ribbedAngle"),
-    uRibbedMode: gl.getUniformLocation(program, "u_ribbedMode"),
     uChromaticEnabled: gl.getUniformLocation(program, "u_chromaticEnabled"),
     uChromaticIntensity: gl.getUniformLocation(program, "u_chromaticIntensity"),
     uChromaticOffset: gl.getUniformLocation(program, "u_chromaticOffset"),
     uChromaticMode: gl.getUniformLocation(program, "u_chromaticMode"),
     uPixelGridEnabled: gl.getUniformLocation(program, "u_pixelGridEnabled"),
     uPixelGridSize: gl.getUniformLocation(program, "u_pixelGridSize"),
-    uPixelGridLineStrength: gl.getUniformLocation(program, "u_pixelGridLineStrength")
+    uPixelGridLineStrength: gl.getUniformLocation(program, "u_pixelGridLineStrength"),
+    uTextureEnabled: gl.getUniformLocation(program, "u_textureEnabled"),
+    uTextureId: gl.getUniformLocation(program, "u_textureId"),
+    uTextureScale: gl.getUniformLocation(program, "u_textureScale"),
+    uTextureIntensity: gl.getUniformLocation(program, "u_textureIntensity"),
+    uTextureDistortion: gl.getUniformLocation(program, "u_textureDistortion"),
+    uGrainIntensity: gl.getUniformLocation(program, "u_grainIntensity")
   };
 }
 
@@ -124,7 +121,8 @@ export function ShaderCanvas({
   preset,
   colors,
   paused = false,
-  qualityMode = "default"
+  qualityMode = "default",
+  grainIntensity = 0.05
 }: ShaderCanvasProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number | null>(null);
@@ -132,6 +130,7 @@ export function ShaderCanvas({
   const colorsRef = useRef<string[]>(colors);
   const pausedRef = useRef<boolean>(paused);
   const qualityModeRef = useRef<"default" | "high">(qualityMode);
+  const grainIntensityRef = useRef<number>(grainIntensity);
   const [shaderError, setShaderError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -149,6 +148,10 @@ export function ShaderCanvas({
   useEffect(() => {
     qualityModeRef.current = qualityMode;
   }, [qualityMode]);
+
+  useEffect(() => {
+    grainIntensityRef.current = grainIntensity;
+  }, [grainIntensity]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -221,6 +224,7 @@ export function ShaderCanvas({
     const render = (now: number): void => {
       const currentPreset = presetRef.current;
       const currentColors = colorsRef.current;
+      const currentGrainIntensity = grainIntensityRef.current;
       const currentQuality = qualityModeRef.current;
       const fpsCap = currentQuality === "high" ? HIGH_QUALITY_FPS_CAP : DEFAULT_FPS_CAP;
       const resolutionScale =
@@ -269,10 +273,9 @@ export function ShaderCanvas({
       }
 
       const overlays = currentPreset.overlays ?? {};
-      const liquid = overlays.liquidGlass;
-      const ribbed = overlays.ribbedGlass;
       const chromatic = overlays.chromaticAberration;
       const pixelGrid = overlays.pixelGrid;
+      const textureOverlay = overlays.textureOverlay;
 
       gl.uniform1f(uniforms.uTime, elapsed);
       gl.uniform2f(uniforms.uResolution, width, height);
@@ -286,16 +289,6 @@ export function ShaderCanvas({
       gl.uniform1f(uniforms.uNoise, currentPreset.noise);
       gl.uniform1i(uniforms.uMode, effectToMode(currentPreset.effect));
 
-      gl.uniform2f(uniforms.uGasDirection, 1.0, 0.35 + currentPreset.distortion * 0.65);
-      gl.uniform1f(uniforms.uGasBandStrength, currentPreset.noise * 0.8);
-
-      gl.uniform1f(uniforms.uLiquidGlassIntensity, liquid?.intensity ?? 0);
-      gl.uniform1f(uniforms.uRibbedEnabled, ribbed ? 1 : 0);
-      gl.uniform1f(uniforms.uRibbedIntensity, ribbed?.intensity ?? 0);
-      gl.uniform1f(uniforms.uRibbedFrequency, ribbed?.frequency ?? 8);
-      gl.uniform1f(uniforms.uRibbedAngle, ribbed?.angle ?? 0);
-      gl.uniform1i(uniforms.uRibbedMode, ribbed ? ribbedModeToInt(ribbed.mode) : 0);
-
       gl.uniform1f(uniforms.uChromaticEnabled, chromatic ? 1 : 0);
       gl.uniform1f(uniforms.uChromaticIntensity, chromatic?.intensity ?? 0);
       gl.uniform1f(uniforms.uChromaticOffset, chromatic?.offset ?? 0);
@@ -304,6 +297,12 @@ export function ShaderCanvas({
       gl.uniform1f(uniforms.uPixelGridEnabled, pixelGrid ? 1 : 0);
       gl.uniform1f(uniforms.uPixelGridSize, pixelGrid?.size ?? 32);
       gl.uniform1f(uniforms.uPixelGridLineStrength, pixelGrid?.lineStrength ?? 0);
+      gl.uniform1f(uniforms.uTextureEnabled, textureOverlay ? 1 : 0);
+      gl.uniform1i(uniforms.uTextureId, textureOverlay ? textureIdToInt(textureOverlay.texture) : 0);
+      gl.uniform1f(uniforms.uTextureScale, textureOverlay?.scale ?? 1);
+      gl.uniform1f(uniforms.uTextureIntensity, textureOverlay?.intensity ?? 0);
+      gl.uniform1f(uniforms.uTextureDistortion, textureOverlay?.distortion ?? 0);
+      gl.uniform1f(uniforms.uGrainIntensity, currentGrainIntensity);
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       animationRef.current = requestAnimationFrame(render);

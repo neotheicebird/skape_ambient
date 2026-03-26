@@ -1,15 +1,4 @@
-export type EffectMode = "flow" | "burn" | "gas";
-
-export type LiquidGlass = {
-  intensity: number;
-};
-
-export type RibbedGlass = {
-  intensity: number;
-  frequency: number;
-  angle: number;
-  mode: "linear" | "grid";
-};
+export type EffectMode = "flow" | "gas" | "burn" | "bands" | "cellular";
 
 export type ChromaticAberration = {
   intensity: number;
@@ -22,11 +11,27 @@ export type PixelGrid = {
   lineStrength: number;
 };
 
+export const TEXTURE_IDS = [
+  "ribbed-fine",
+  "ribbed-wide",
+  "ribbed-diagonal",
+  "frosted-soft",
+  "grain"
+] as const;
+
+export type TextureId = (typeof TEXTURE_IDS)[number];
+
+export type TextureOverlay = {
+  texture: TextureId;
+  scale: number;
+  intensity: number;
+  distortion?: number;
+};
+
 export type OverlaySettings = {
-  liquidGlass?: LiquidGlass;
-  ribbedGlass?: RibbedGlass;
   chromaticAberration?: ChromaticAberration;
   pixelGrid?: PixelGrid;
+  textureOverlay?: TextureOverlay;
 };
 
 export type Preset = {
