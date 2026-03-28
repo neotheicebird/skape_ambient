@@ -1,0 +1,10 @@
+{
+  "name": "photosynthesis",
+  "palette": "slimy-05",
+  "effect": "cellular",
+  "speed": 1.5,
+  "distortion": 0.1,
+  "noise": 0.6,
+  "overlays": {},
+  "performanceScore": 3
+}

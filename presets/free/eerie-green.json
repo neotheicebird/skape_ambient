@@ -1,0 +1,16 @@
+{
+  "name": "eerie-green",
+  "palette": "kirokaze-gameboy",
+  "effect": "bands",
+  "speed": 1.51,
+  "distortion": 0.25,
+  "noise": 0.5,
+  "overlays": {
+    "chromaticAberration": {
+      "intensity": 0.25,
+      "offset": 0.4,
+      "mode": "directional"
+    }
+  },
+  "performanceScore": 4
+}

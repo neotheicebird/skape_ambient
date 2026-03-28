@@ -3,6 +3,9 @@ creator-tool/node_modules/
 
 # Build outputs
 creator-tool/dist/
+creator-tool/*.tsbuildinfo
+creator-tool/vite.config.js
+creator-tool/vite.config.d.ts
 
 # Local environment files
 *.local

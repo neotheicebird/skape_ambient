@@ -1,0 +1,9 @@
+{
+  "name": "symbiotes",
+  "palette": "lava-gb",
+  "effect": "cellular",
+  "speed": 3,
+  "distortion": 0.6,
+  "noise": 1,
+  "performanceScore": 3
+}

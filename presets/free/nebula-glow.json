@@ -1,0 +1,10 @@
+{
+  "name": "nebula glow",
+  "palette": "curiosities",
+  "effect": "bands",
+  "speed": 0.95,
+  "distortion": 0.5,
+  "noise": 0.59,
+  "overlays": {},
+  "performanceScore": 2
+}

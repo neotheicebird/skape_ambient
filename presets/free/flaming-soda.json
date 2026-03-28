@@ -1,0 +1,16 @@
+{
+  "name": "flaming soda",
+  "palette": "soda-cap",
+  "effect": "burn",
+  "speed": 0.7,
+  "distortion": 0.75,
+  "noise": 0.75,
+  "overlays": {
+    "chromaticAberration": {
+      "intensity": 0.4,
+      "offset": 0.15,
+      "mode": "radial"
+    }
+  },
+  "performanceScore": 4
+}

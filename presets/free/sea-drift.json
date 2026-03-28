@@ -1,0 +1,15 @@
+{
+  "name": "sea-drift",
+  "palette": "curiosities",
+  "effect": "gas",
+  "speed": 0.5,
+  "distortion": 0.3,
+  "noise": 0.5,
+  "overlays": {
+    "pixelGrid": {
+      "size": 160,
+      "lineStrength": 0.13
+    }
+  },
+  "performanceScore": 4
+}

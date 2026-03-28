@@ -1,0 +1,10 @@
+{
+  "name": "twilight-fade",
+  "palette": "twilight-5",
+  "effect": "flow",
+  "speed": 0.1,
+  "distortion": 0.03,
+  "noise": 0.1,
+  "overlays": {},
+  "performanceScore": 1
+}
